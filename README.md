@@ -43,7 +43,7 @@ cmake --build build-asan -j8
 | s | shuffle |
 | r | repeat off → all → one |
 | + / − | volume |
-| ctrl+r | reload `config.ini` live |
+| ctrl+9 / ctrl+0 | reload `config.ini` live |
 | q | quit |
 
 ## Mouse

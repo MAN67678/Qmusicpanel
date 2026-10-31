@@ -29,6 +29,14 @@ struct Rect {
     bool contains(int px, int py) const { return px >= x && py >= y && px < x + w && py < y + h; }
 };
 
+// Virtual key codes for keys that have no unicode codepoint. Kept above the
+// BMP so they can never collide with a real character (see Input::key).
+enum VKey {
+    VK_UP = 1001, VK_DOWN = 1002, VK_RIGHT = 1003, VK_LEFT = 1004,
+    VK_HOME = 1005, VK_END = 1006, VK_DEL = 1007,
+    VK_RELOAD = 1008,     // ctrl+9 / ctrl+0 (plain 9/0 where the terminal drops modifiers)
+};
+
 class Terminal {
 public:
     static Terminal& get() { static Terminal t; return t; }

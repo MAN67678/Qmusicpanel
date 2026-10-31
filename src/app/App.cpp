@@ -129,7 +129,7 @@ const CoverPixels& fallbackCover(const std::string& spec) {
 } // namespace
 
 // ---------------------------------------------------------------------------
-// live config reload (Ctrl+R / Ctrl+Shift+R)
+// live config reload (ctrl+9 / ctrl+0)
 // Re-reads the same file into a FRESH Config (so deleted keys fall back to
 // defaults), then re-applies everything that is cached in the app.
 // ---------------------------------------------------------------------------
@@ -284,10 +284,8 @@ void App::scrollTree(int dy) {
 // ---------------------------------------------------------------------------
 // input
 // ---------------------------------------------------------------------------
-namespace {
-enum KeyV { K_UP = 1001, K_DOWN = 1002, K_RIGHT = 1003, K_LEFT = 1004,
-            K_HOME = 1005, K_END = 1006, K_DEL = 1007 };
-}
+// arrow/whitelist key codes live in Terminal.hpp (VKey) so the parser and the
+// dispatcher can never drift apart.
 
 void App::handleInput(const Input& ev) {
     // While the visualizer is on the front:
@@ -336,7 +334,7 @@ void App::onKey(int key) {
     // While the idle visualizer is up, the first keypress only sends it away
     // (animated) — acting on the hidden tree in the same keystroke is a
     // surprise, e.g. Enter playing a track you could not see.
-    if (key == 18) { reloadConfig(); return; }        // Ctrl+R / Ctrl+Shift+R
+    if (key == VK_RELOAD) { reloadConfig(); return; }  // ctrl+9 / ctrl+0
     if (key != 'q' && key != 'Q' && (fade_ > 0.001f || fadeTarget_ > 0.001f)) { vizHide(); return; }
     switch (key) {
         case 'q': case 'Q':
@@ -346,9 +344,9 @@ void App::onKey(int key) {
             fadeTarget_ = 0.f;
             audio_.toggle();
             break;
-        case K_LEFT:  audio_.seekBy(-10.0); break;
-        case K_RIGHT: audio_.seekBy(10.0);  break;
-        case K_UP: {
+        case VK_LEFT:  audio_.seekBy(-10.0); break;
+        case VK_RIGHT: audio_.seekBy(10.0);  break;
+        case VK_UP: {
             auto rows = lib_.visible(top_, layout().browser.h - 3);
             if (rows.empty()) break;
             int pos = -1;
@@ -358,7 +356,7 @@ void App::onKey(int key) {
             else selected_ = rows[size_t(pos) - 1];
             break;
         }
-        case K_DOWN: {
+        case VK_DOWN: {
             auto rows = lib_.visible(top_, layout().browser.h - 3);
             if (rows.empty()) break;
             int pos = -1;

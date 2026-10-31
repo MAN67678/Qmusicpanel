@@ -233,12 +233,13 @@ int Terminal::decodeUtf8Push(size_t at) {
 
 void Terminal::decodeCsi(const std::string& params, uint8_t final) {
     if (final == 'u') {
-        // kitty keyboard protocol: CSI codepoint;modifier u. Ctrl+R and
-        // Ctrl+Shift+R map to the same action (mod 5 = ctrl, 6 = ctrl+shift).
+        // kitty keyboard protocol: CSI codepoint;modifier u. Ctrl+9 / Ctrl+0
+        // are the reload bindings (mod 5 = ctrl, 6 = ctrl+shift); Ctrl+R was
+        // dropped because it collides with the terminal's own shortcuts.
         int cp = 0, mod = 0;
-        if (std::sscanf(params.c_str(), "%d;%d", &cp, &mod) == 2 &&
-            (cp == 'r' || cp == 'R') && mod >= 5) {
-            Input ev; ev.kind = Input::Key; ev.key = 18;
+        if (std::sscanf(params.c_str(), "%d;%d", &cp, &mod) == 2 && mod >= 5 &&
+            (cp == '9' || cp == '0')) {
+            Input ev; ev.kind = Input::Key; ev.key = VK_RELOAD;
             pending_.push_back(ev);
         }
         return;
@@ -264,15 +265,15 @@ void Terminal::decodeCsi(const std::string& params, uint8_t final) {
         return;
     }
     switch (final) {
-        case 'A': ev.key = 1001; break; // virtual key codes (above unicode BMP range)
-        case 'B': ev.key = 1002; break;
-        case 'C': ev.key = 1003; break;
-        case 'D': ev.key = 1004; break;
-        case 'H': ev.key = 1005; break;
-        case 'F': ev.key = 1006; break;
+        case 'A': ev.key = VK_UP; break;      // virtual key codes (above unicode BMP range)
+        case 'B': ev.key = VK_DOWN; break;
+        case 'C': ev.key = VK_RIGHT; break;
+        case 'D': ev.key = VK_LEFT; break;
+        case 'H': ev.key = VK_HOME; break;
+        case 'F': ev.key = VK_END; break;
         case '~': {
             int n = std::atoi(params.c_str());
-            if (n == 3) ev.key = 1007; else return;
+            if (n == 3) ev.key = VK_DEL; else return;
             break;
         }
         default: return;
@@ -293,6 +294,10 @@ void Terminal::parseStream() {
             if (b < 0x80) { // fast path: single byte printable/control
                 Input ev; ev.kind = Input::Key; ev.key = b;
                 if (b == '\r' || b == '\n') ev.key = '\n';
+                // Ctrl+9 / Ctrl+0: terminals without the kitty protocol send
+                // the bare digit (0x39 / 0x30), so the digits double as the
+                // config-reload key. Nothing else binds 9 or 0.
+                else if (b == '9' || b == '0') ev.key = VK_RELOAD;
                 pending_.push_back(ev);
                 inBuf_.clear();
                 continue;

@@ -115,7 +115,7 @@ int buildMain(int argc, char** argv) {
             "\n"
             "keys: space=play/pause  arrows=seek/tree nav  enter=play/expand\n"
             "      s=shuffle  r=repeat  +/-=volume  q=quit\n"
-            "      ctrl+r (or ctrl+shift+r) = reload config.ini live\n"
+            "      ctrl+9 or ctrl+0 = reload config.ini live\n"
             "mouse: click tree (single=select, double=expand/play)  scrub=drag seek\n");
         return 0;
     }

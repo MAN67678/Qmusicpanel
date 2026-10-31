@@ -437,8 +437,10 @@ the resolved path, creates ~/.config/qpanel).
   [colors]  optional per-theme overrides: accent_a/accent_b/frame/frame_hi/
             surface/text/dim/label/ok/warn/err as #RRGGBB
 
-LIVE RELOAD: Ctrl+R (or Ctrl+Shift+R where the terminal reports modifiers —
-kitty keyboard protocol CSI 114;6u; plain terminals send the same 0x12) re-reads
+LIVE RELOAD: ctrl+9 or ctrl+0 (VK_RELOAD in Terminal.hpp; kitty keyboard
+protocol CSI 57;5u / 48;5u, and the bare digits 9/0 where the terminal does not
+report modifiers — Ctrl+R was dropped because it collides with terminal
+shortcuts) re-reads
 the same file into a FRESH Config, so removed keys fall back to defaults. It
 re-applies palette, icons, art engine/settings (cover re-renders), volume and
 idle timeout, and flashes "CFG RELOADED" / "CFG n WARN" / "NO CONFIG" in the

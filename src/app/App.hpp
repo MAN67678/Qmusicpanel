@@ -53,7 +53,7 @@ private:
 
     // ---- misc ----
     void applyTrack(const std::string& path);
-    void reloadConfig();                    // Ctrl+R / Ctrl+Shift+R
+    void reloadConfig();                    // ctrl+9 / ctrl+0
     void vizShow() { idle_ = false; fadeTarget_ = 1.f; }  // click => spectrum
     void vizHide() { idle_ = false; fadeTarget_ = 0.f; }  // click => tree
     void scrollTree(int dy);
