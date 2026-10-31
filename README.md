@@ -76,7 +76,9 @@ Palettes: `hyper` (default), `catppuccin-mocha`, `catppuccin-macchiato`,
 
 `devnote.txt` is the living design document — architecture, threading rules,
 the text-metrics contract (a cell is a *column*, wide glyphs occupy two), the
-spacing/gutter conventions and the bugs that produced them.
+spacing/gutter conventions and the bugs that produced them. `AGENTS.md` has the
+build/verify commands and the invariants an AI agent (or a new contributor) has
+to respect.
 
 ## Status
 
