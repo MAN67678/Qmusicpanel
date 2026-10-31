@@ -1,0 +1,14 @@
+# build output
+build/
+build-asan/
+*.o
+*.obj
+
+# pty harness dumps / screenshots
+*.bin
+/dump*.txt
+/*.png
+
+# editor / os noise
+.DS_Store
+*.swp

@@ -1,0 +1,506 @@
+# QPANEL — DEV NOTE (living document)
+:last edited: 2026-10-31 evening
+:owner: man1
+:binary: build/qpanel  (source in src/, vendored deps in vendor/)
+
+============================================================================
+ 0. TL;DR STATUS
+============================================================================
+Build: GREEN (Release + ASan both compile; zero ASan errors on play/pause/seek,
+idle-crossfade and spectrum paths; also builds CLEAN with chafa disabled).
+Works today (verified through a scripted pty harness — see §8):
+  - standalone zero-config playback (wav/flac/mp3/ogg verified paths in code)
+  - chafa art engine (libchafa, truecolor, 5 symbol sets, dither modes) with the
+    built-in half-block renderer as automatic build-time fallback
+  - width-correct text: CJK/katakana/fullwidth/emoji occupy 2 columns, so titles
+    and filenames no longer shift rows or bleed through the chassis
+  - control-character sanitizing (a filename starting with \n no longer writes
+    a CRLF into the middle of a panel)
+  - mouse-first TUI: click-to-play, double-click-to-expand, scrub drag,
+    volume drag, SGR 1006 coordinates
+  - every dock is click-focusable (METADATA / BROWSER / ART / CONTROLS); a
+    click anywhere that is not the tree brings the spectrum forward at once
+    (idle timer still returns to it after [general] idle_timeout)
+  - metadata panel (TagLib), BPM tag read, cover art extract + 1:1 render
+  - idle crossfade: tree -> CAVA bars with 4x4 Bayer dither over ~0.7s,
+    instant snap back on any input
+  - Hyprland aesthetic: gaps_out/gaps_in layout, rounded chassis, 45deg
+    hermite-eased gradient borders, gap drop-shadow, seven TrueColor palettes
+  - config.ini: theme/icons/volume/idle_timeout, gaps + interior padding +
+    border style (rounded/single/double/heavy/ascii/none) + shadow toggle,
+    chafa settings, and per-theme colour overrides (§11)
+  - vector layer: DisplayTier breakpoints, BrailleCanvas (2x4 dot), big-clock
+    raster font, cinema-mode giant play/pause buttons, braille oscilloscope
+    strip on ultrawide
+  - bars bleed exactly ONE row over the panel's upper frame (alpha-blended) and
+    never paint over the title tab or the neighbouring panel
+
+Not yet (roadmap at §9): MPRIS2 D-Bus, Kitty graphics protocol covers,
+BPM beat-analysis fallback, playbackdbuf multi-file safety, config file.
+
+============================================================================
+ 0b. FIXED THIS SESSION (2026-10-31 evening)
+============================================================================
+- EVEN SPACING PASS (owner: "make spacing evenly" / "satisfied to watch"):
+  the UI was flush to the screen edges while every inter-panel gap was one
+  cell, so the frame read as lopsided. Now:
+    * [layout] gap_out defaults to 1 = gap_in: a one-cell margin on all four
+      sides, identical to the gutters between docks. The shadow guard
+      (x2+1 < width-1) then keeps the outer frame clean while inner gutters
+      keep their drop shadow.
+    * ONE content gutter: METADATA labels, BROWSER top-level rows, the deck
+      (INL = q.x+2 / INR = q.x+q.w-3) and the SPECTRUM canvas (inset 2, so the
+      bars no longer run frame-to-frame and the Bass/Treble ruler sits on the
+      same columns as the bars) all start two cells in from the frame.
+      The tree keeps 2 cells per depth level, with depth 1 as the base.
+    * METADATA block is vertically centred and ADAPTIVE: it builds its rows
+      into a vector, drops Format then Album when the dock is short, and draws
+      what fits. gap_out=1 shrinks the metadata dock at 92x28 to 6 content
+      rows — the old fixed 7-row draw simply bailed and left the panel EMPTY.
+    * DECK: the cinema clock is centred in the free rows above the scrub row,
+      and status/scrub/volume all use the same left/right gutter (the volume
+      value now ends exactly on it, like the duration). The "Vol: 85%" label
+      in METADATA also got its missing space.
+    * PLAY/PAUSE button: same shape, now with a drop shadow cast one cell
+      UP-RIGHT (light from below-left). The shadow re-uses the art's own
+      glyphs (▄/█/▀) at a dim colour, painted before the glyphs and clipped to
+      the dock interior — a solid '█' stamp read as blocky steps and a '░'
+      dither read as a dotted halo.
+- CLICK-TO-FOCUS / CLICK-TO-SPECTRUM (UX): clicking METADATA or ART now moves
+  the focus highlight to that dock (chassis gradient + glow + ∙∙∙ tail) AND
+  brings the visualizer forward; a click on the gap/background does the same
+  without moving focus. The CONTROLS/PLAY docks stay transport-only, so
+  pausing never flashes the visualizer. Clicking the BROWSER/SPECTRUM dock is
+  still the way back to the tree. chassis() grew a `float active` argument
+  (0..1 = "lit but not focused") so the spectrum panel keeps its gradient
+  while the click focus sits on another dock; only the truly focused dock
+  (glow > 0.9) gets the dotted title tail.
+  GOTCHA: any click that asserts the visualizer must clear idle_, because the
+  idle timer's own branch (idle_ && sinceInput <= timeout => fadeTarget_=0)
+  would cancel it on the very next frame. vizShow()/vizHide() in App exist
+  for exactly that.
+- VOLUME WAS A SILENT NO-OP. deviceCb copied the PCM ring to the output buffer
+  and only scaled the mono visualizer tap, so the slider and +/- changed
+  numbers and nothing else. Gain is now applied to `dst` (the only place audio
+  leaves the engine). Volume drag (press+motion) implemented in App::onMouse.
+- WIDE GLYPHS SHIFTED ROWS. The cell grid was one codepoint per column; every
+  CJK/katakana/fullwidth char pushed the rest of its row one column right, so
+  `DECO＊27 - ヴァンパイア…` painted through the panel border into the ART panel.
+  Cells now carry a `cont` flag for the trailing half; Terminal::setCell,
+  Canvas::set, flush() and every text call-site go through ui/Text.hpp
+  (cpWidth / drawText / drawTextTrunc).
+- CONTROL CHARS. `~/Music/\nKatagiri…mp3` starts with a newline byte; the app
+  emitted it and ONLCR turned it into CRLF mid-frame, wiping the metadata
+  panel's left border. decodeUtf8 now maps C0/C1 to space and invalid UTF-8 to
+  U+FFFD, in both the widget and terminal layers.
+- CINEMA DECK WAS UNREACHABLE below ~178 columns: the guard needed deck width
+  >= 96 but the 46% left column starved it. Now >= 72 (needs ~70).
+- METADATA Status row was drawn onto the panel's bottom border; panel height
+  min is 10 rows and the draw is clipped to the interior.
+- Bars used to bleed 2 rows, overwriting the title tab and the panel above;
+  now 1 row, only over frame cells (Terminal::peek guards text).
+- SPECTRUM HAD THREE SEPARATE DEFECTS (reported as "only low/mid, offset wrong"):
+    * bars were laid out with `step = w / nbars` while nbars was capped at 32,
+      so on a wide panel (art_panel=false, ~90 cols) they stopped at column 64
+      and the treble third was simply never drawn. Now spread proportionally:
+      x = b * w / nbars.
+    * `interiorTop` still added +2 on top of contentRect (same double-offset
+      class of bug as the deck) — the whole visualizer sat two rows low and the
+      Bass/Mid/Treble ruler landed OUTSIDE the panel on the shadow row.
+    * spectrum dock layout, bottom up (the owner's spec):
+        row cv.h-2  bars (baseline here, everything above is signal)
+        row cv.h-1  Bass / Mid / Treble axis labels
+        row cv.h    the dock's wall
+      Labels get their own row (fg mix(dimmer,text,.7)); they are painted after
+      the bars so they can never be covered.
+    * while the visualizer owns the panel, chassis() is told it is focused:
+      the unfocused frame colour #1E2740 is effectively black and looked like a
+      black bar under the bright bars.
+    * display normalization: a per-band auto gain pinned every bar to the same
+      height (flat wall). Now normalized against a slow GLOBAL peak (~3s decay,
+      floor 0.012) with pow(rel, 0.65) to lift the treble, gated below rel 0.045.
+      Gives a natural bass->treble slope with the treble still moving.
+    * band power used the AVERAGE over each band's FFT bins. The top log bands
+      span hundreds of bins vs one or two at the bottom, so averaging diluted
+      the treble ~20-50x below the mids. Now PEAK per band, plus per-band auto
+      gain (running peak, ~3.5s decay) blended 62/38 with the absolute level.
+      QPANEL_DSP_DEBUG=1 dumps the 32 normalized band levels once a second.
+- PCM RING LEAK (LeakSanitizer, exit code): ma_pcm_rb_init allocates ~128 KB
+  that AudioEngine::shutdown never freed. ma_pcm_rb_uninit now runs there.
+- SPECTRUM FILL / SENSITIVITY: each band now paints its WHOLE column range
+  [b*w/n, (b+1)*w/n) instead of one cell, so bars touch and widen with the
+  terminal (1-cell bars with 2-column pitch read as "thinner when scaled up").
+  Gain retuned after the AGC landed: v = 0.85*norm + 0.12*raw with a 0.001 raw
+  noise gate — the previous blend pinned bars at 1.0 ("too sensitive") and the
+  0.02 gate silenced quiet tracks completely.
+- LAYOUT v2 (owner's spec): the bottom row is ALWAYS two docks —
+    [ CONTROLS ................ ] [ PLAY (square) ]
+  and the top row is [meta / browser] | [ART (square)]. Both squares use
+  w = 2*h (cells are 1x2). The ART dock therefore sizes itself from its height,
+  and whatever width is left goes to the tree column (it is much wider than the
+  old fixed 46% split). PLAY is its own dock at every size now: the old
+  splitPlay() only fired above 56 columns, which is why small terminals had no
+  separate play dock. PLAY holds only the button (no frame around it) and its
+  interior is the click target.
+- MOUSE WHEEL: hovering the volume bar scrolls loudness (+/-5%/notch) instead of
+  the tree. While fixing that, the SGR button map was wrong: 64 AND 65 both
+  decoded as WheelUp, so wheel-down scrolled the tree (and volume) the wrong
+  way. Now 64 = up, 65 = down, 66/67 (horizontal) ignored.
+- VOLUME LABEL: cinema drew "VOL" at vbX-1 and then the bar over it, leaving a
+  bare "V". The label now ends one cell before the bar.
+- SPECTRUM FLOATED ABOVE THE WALL ON WIDE TERMINALS: with the braille
+  oscilloscope active (w > 130) `rows` already had scopeRows removed, and the
+  canvas height subtracted them AGAIN (`contentH + ext - scopeRows`), so the
+  whole spectrum - bars and labels - sat three rows off the bottom. Canvas is
+  now anchored below the scope strip with contentH rows. Verified at 160x45,
+  320x78 and 480x146.
+- IDLE VISUALIZER NEVER WENT AWAY. fadeEased_ was only recomputed inside
+  `if (fabs(fadeTarget_ - fade_) > 0.001)`, and input set both to 0, so the
+  delta was 0, the smoothstep never ran again and fadeEased_ stayed at 1.0 —
+  the render kept routing to W::spectrum while idle_ was already false. Now
+  smoothed every frame, unconditionally.
+  Dismissal also animates (fadeTarget_=0, out speed 5/s ≈ 0.2s) instead of
+  snapping, and the dismissing click/key does NOT also act on the tree it was
+  hiding (a click dismissed AND played whatever row sat underneath). Returns on
+  the 8s idle timer, as before. Verified by frame-stamped pty capture: idle →
+  click → mid-crossfade → tree with the SAME selection → 10s → SPECTRUM again.
+
+============================================================================
+ 1. ARCHITECTURE — MFS (Modularity / Flexibility / Scalability)
+============================================================================
+Threads (per the concurrency diagram in the original spec):
+
+  MAIN/UI  : term poll (stdin), 60fps render loop, double-buffer diff flush,
+             hit-test dispatch, idle timer, queue drain.
+  AUDIO    : miniaudio device callback + decode thread (decoder ->
+             lock-free ma_pcm_rb -> callback). MPSC: none needed; device cb
+             is the only writer to the DSP tap.
+  DSP      : 30Hz analyzer thread. Drains mono tap into a rolling 2048-frame
+             history, Hann window, FFTW r2c, log bands 30Hz..16kHz,
+             CAVA physics (instant rise clamped at 0.985, accelerating
+             gravity falloff capped at 12). Publishes 32-bar snapshot under a
+             small mutex (once per 33ms — no UI contention).
+  WORKER   : one job queue thread for blocking work (TagLib, stb decode,
+             directory scans). Results published to the UI via postUi()
+             (mutex + deque drained at frame start by the UI thread).
+
+HARD RULES LEARNED:
+  - Library tree is OWNED by the UI thread. Workers only run scan() which
+    copies the dir entry list; graft() happens on the UI thread. The first
+    implementation grafted from the worker and crashed (use-after-free in
+    push_back due to the TreeNode& invalidating on realloc, PLUS a data race
+    against the render loop). postUi() exists precisely to keep tree/meta
+    mutations on the main thread.
+  - Audio decoder swaps (audio_.load) happen on the UI thread: cheap enough
+    (open+probe+device start) and dodges any lock in the engine.
+  - The device callback never blocks: underrun => zero-fill tail; tap is
+    drop-on-full so audio never back-pressures on the visualizer.
+
+Files map:
+  src/term/Terminal.{hpp,cpp}   raw mode, UTF-8, SGR1006 mouse, diff buffer,
+                               2-column cell contract (lead + cont half)
+  src/ui/Text.hpp               cpWidth / decodeUtf8 / drawText(Trunc) — the
+                               single place that decides display columns
+  src/audio/AudioEngine.*       miniaudio decode/play/seek/vol + mono tap
+  src/dsp/Spectrum.*            FFT thread / falloff physics / bars + wave
+  src/media/Media.*             TagLib2 tags/BPM/covers, stb decode+resize
+  src/media/ChafaRender.*       libchafa art engine (+ no-chafa stub)
+  src/fs/Library.*              lazy tree, scan/graft split for threading
+  src/ui/Palette.hpp            7 TrueColor palettes + mix()/grad()
+  src/ui/Glyphs.hpp             3-tier GlyphSet (unicode/ascii/nerd)
+  src/ui/Vector.hpp             DisplayTier, BrailleCanvas, BigClock/BGlyphs
+  src/ui/Widgets.*              chassis/panels/deck/spectrum/crossfade
+  src/app/App.*                 layout, input map, idle timer, run loop
+  src/vendor_impl.cpp           single TU instantiating miniaudio/stb
+
+============================================================================
+ 2. TERMINAL ENGINE (Milestone 1)
+============================================================================
+- Double buffer: cur_/last_ vectors of Cell{char32_t ch, fg, bg}; flush()
+  runs runs-of-dirty cells and only emits CUP+SGR for changes. SGR state
+  machine tracks lastFg/lastBg so TrueColor only re-emits on change.
+  CRITICAL: both buffers are invalidated STALE on real resize (onResize
+  reassigns), so a SIGWINCH spike after boot can produce one "empty diff"
+  frame — mitigated because chassis repaints every frame (borders always
+  re-covered). Also confirmed the previous "missing border columns" scare
+  was our PYTHON EMULATOR's wrap handling, not the app: the escape stream
+  had diffs at e.g. "\e[2;42H││" exactly as designed.
+- Input: fast-path 1-byte keys, incremental UTF-8 reassembly, CSI parser
+  carrying SGR 1006 ("ESC [<b;x;y M|m") into press/release/motion/wheel.
+  Virtual key codes above 0x3000 avoid unicode collisions (test wheel
+  btn 64/65 => WheelUp, 66/67 => WheelDown per SGR spec).
+- Transparency: interiors are emitted with \e[49m / bg NONE. Panel "surface"
+  colors NEVER paint the background — Hyprland blur/transparency survives.
+- SIGWINCH: markResized() → refreshed before paint; vk RefreshSize public.
+
+============================================================================
+ 3. AUDIO CORE (Milestone 2)
+============================================================================
+- ma_decoder pinned to f32/2ch/44.1kHz so all sources share one pipeline.
+- ma_pcm_rb (16384 frames) between decodeLoop and deviceCb; decodeDone_ →
+  EOF when ring drains; device cb advances posFrames (sample-accurate-ish),
+  applies volume linear gain, and taps mono (L+R)/2 * vol into SPSC float
+  ring TAP_SIZE=32768 (guarded SPSC, capacity TAP_SIZE-1, drop-on-full).
+- Seek: atomic target frame; the decode loop seeks, resets the rb,
+  continue. Position: posFrames_ clamped to totalFrames_.
+- NOTE: miniaudio decodes MP3/FLAC/OGG/WAV/Mod; AAC/M4A/.ogg-vorbis inside
+  mp4 container is NOT in miniaudio — falls back to "unreadable" meta with
+  a clean deck (roadmap: optional ffmpeg libavcodec bridge).
+- Volume: atomic float 0..1, device cb multiplies. UI writes via +/-.
+
+============================================================================
+ 4. METADATA / ART PIPELINE (Milestone 3)
+============================================================================
+- TagLib 2.0.2 API notes (we hit all of these):
+    * Tag::bpm() does NOT exist in 2.0 — BPM comes from Tag::properties()
+      ["BPM"] (TBPM / FPMC / MP4 bpm). toDouble doesn't exist on String →
+      std::stod(str.to8Bit(true)).
+    * MP4::Tag::itemListMap() → itemMap() in 2.0.2; covr via ItemMap find.
+    * FLAC bits: FLAC::Properties->bitsPerSample (not FLAC::File).
+- Covers: ID3v2 APIC (largest), FLAC pictureList, Xiph pictureList, MP4
+  covr; fallback directory art scan (cover/folder/front/album/art + jpg/
+  jpeg/png/bmp) — webp deliberately excluded (stb_image lacks webp decode).
+- Resize: Media::squareResize center-crops to square then
+  stbir_resize_uint8_srgb(..., STBIR_RGB) (the deprecated-header signature!
+
+  took pixel-layout enum, NOT (channels, alpha, flags) — that bit us first).
+- Half-block 1:1 (default OFF now, kept as fallback and via --art block):
+  cover() renders each cell with U+2580: fg=top pixel, bg=bottom pixel; canvas
+  cols N = min(availW, 2*availH) rows = N/2 → N×N true-square image. Cache
+  keyed by renderedCols.
+- CHAFA ENGINE (default): libchafa renders the cover into cells at canvas
+  resolution; each cell yields char + fg + bg, so symbol sets, truecolor and
+  dithering are all chafa's. Feeding it the 1-px-per-cell bitmap made a blurry
+  upscale — feed a squareResize(src, cols*8) sample instead (artSrc cache).
+  Symbols: HALF|SOLID|SPACE is the default because cell geometry is 1x2 (and
+  those glyphs exist in every font); QUADRANT/SEXTANT/BRAILLE imply square
+  subpixels and are opt-in. `all` pulls in Symbols-for-Legacy-Computing → tofu.
+  Build: headers vendored in vendor/chafa (from libchafa-dev .deb, no root
+  needed), runtime is /usr/lib/…/libchafa.so.0 via find_library. Without them
+  ChafaRender.cpp compiles to stubs and the half-block path runs unchanged.
+  CLI: --art chafa|block, --chafa-symbols block|ascii|ramp|sextant|braille|all,
+       --chafa-colors truecolor|256|16, --chafa-dither none|ordered|diffusion.
+- ASCII ART IS OURS, NOT CHAFA'S. chafa's "ascii" class includes letters and
+  digits (A F g J k L P R y Z 4 5 7 9) — that is the "random text over the
+  cover" look — and chafa can only use symbols it has glyph-coverage data for,
+  so a custom punctuation ramp collapses to ~2 usable chars ($ @ _ ~). So
+  symbols=ascii|ramp route to asciiArtRender() in ChafaRender.cpp: average each
+  cell, luminance -> glyph from [art] ramp (default ".:-=+*#%@", leading space
+  implied), fg = cell colour, no bg. Two passes so the ladder contrast-stretches
+  to the image's own min/max — without that a bright cover is a wall of '@'.
+- Placeholder: gradient dim card + ♪ (or nerd nf-md-music) while loading.
+
+============================================================================
+ 5. IDLE SYSTEM (Milestone 4)
+============================================================================
+- lastInput_ updated on EVERY key/mouse/quit event. 8s > idle ⇒ target 1.0;
+  any input ⇒ target 0.0 and the fade runs OUT at 5/s (~0.2s morph); the fade
+  IN is 1.5/s. fadeEased_ = smoothstep(fade_) is recomputed EVERY frame — never
+  inside the "value changed" branch, or it strands at its last value.
+- While the visualizer is up OR animating (fade_ > 0.001 || fadeTarget_ > 0.001):
+    * a click inside the browser/spectrum panel dismisses it (animated), nothing else;
+    * a click on METADATA / ART focuses that dock and KEEPS the visualizer
+      (it also cancels a dismissal already in flight); a click in the gap or
+      any other empty background summons the visualizer the same way. Both go
+      through vizShow(), which clears idle_ so the idle timer cannot yank it
+      back to the tree on the next frame;
+    * the TRANSPORT stays LIVE — CONTROLS dock and the PLAY panel keep working
+      (pause, volume, scrub, drags), and those events deliberately do NOT touch
+      lastInput_, so the visualizer stays up while you adjust something;
+    * wheel and clicks anywhere else (metadata/art) are dropped before the idle
+      timer is touched, since resetting it would fade the visualizer away;
+    * keyboard: any key dismisses silently, `q` still quits.
+- Timeline: fade ramps at 1.5/s in, 5/s out; smoothstep easing before
+  render (t*t*(3-2t)).
+- Blend algo: paint tree into Canvas A, spectrum into Canvas B, then a
+  4x4 ordered Bayer dither picks cell-by-cell which owner wins, with fg
+  color injected from the losing side near the threshold — reads as
+  dissolving sand rather than a hard cut. Chassis title swaps at 0.5
+  ("BROWSER" → "SPECTRUM -- IDLE").
+- FULL-idle branch (t≥0.999) routes to W::spectrum() directly so the
+  ruler (Bass/Mid/Treble) and overflow bars can shine without dithering.
+
+6a. TEXT METRICS (non-negotiable)
+   - A cell is a COLUMN, not a codepoint. Wide = 2 columns (CJK, katakana,
+     fullwidth forms, emoji), combining = 0. Never index text by codepoint
+     count; use cpWidth()/drawText() from ui/Text.hpp.
+   - The grid carries the second half of a wide glyph as a `cont` cell (ch==0).
+     flush() skips it and backs up to the lead when only the half is dirty;
+     overwriting either half detaches the partner (Terminal::detachWide).
+   - Sanitize text at decode: C0/C1 → space, invalid UTF-8 → U+FFFD. A tag or
+     filename with a newline otherwise emits a CRLF into the frame.
+   - Put a space between a label colon and the value; a wide glyph at the last
+     column degrades to a space instead of wrapping.
+
+============================================================================
+ 6b. HYPRLAND "HYPER LAND" DESIGN RULEBOOK (what we committed to)
+============================================================================
+0. WINDOW GEOMETRY = gaps_out + gaps_in. App::layout keeps an outer margin
+   (gap_out, default 1: equal to gap_in so the UI gets an even one-cell frame
+   on all four sides) and a gap_in of 1 cell between every panel (Hyprland
+   gaps_out 5 / gaps_in 5 translated to a character grid). Every panel gets a
+   soft drop shadow of U'░' in its gap at alpha .30 — but never on the
+   outermost screen row/column, where it just drew a dotted line along the
+   terminal edge (with gap_out = 1 that guard now also keeps the frame clean).
+0b. Active border is a 45° sweep: the blend parameter is (dx+dy)/(w+h), not dx.
+   Corners of the focused panel are pushed 25% toward P.text (the glow).
+1. Rounded chassis (U+256D U+2567 Family) everywhere; dotted "∙∙∙" tail on
+   the title tab of focused panels for that Hyprland conf-file feel.
+2. Gradient borders: focused border colors are a hermite-eased LERP
+   frameHi → accentA → accentB across x — the equivalent of
+   col.active_border = cyan → violet 45deg.
+3. Default-terminal-bg everywhere (transparency friendly). Palette bg
+   fields exist but are intentionally unused at runtime.
+4. 7 palettes out of the box: hyper (default), catppuccin mocha/macchiato/
+   latte, tokyo-night, rose-pine, gruvbox-material.
+5. Easing physics everywhere: smoothstep fades, CAVA gravity bars, hermite
+   border sweeps. No snap cuts except on user input (deliberate).
+6. Never tofu: 3-tier GlyphSet in ui/Glyphs.hpp — Safe Unicode default
+   (U+25A0-U+25FF + box drawing, all 1-cell wide, theme-colored), Pure
+   ASCII fallback (SSH/TTY), Nerd Fonts opt-in behind --icons nerd.
+   NO emojis anywhere in the default build (btop rule).
+
+============================================================================
+ 7. VECTOR LAYER (Milestone 5 — "multi-character drawing")
+============================================================================
+- evaluateTier(cols, rows): <85cols | <24rows => Compact; >130x36 =>
+  Expanded; else Standard. layout() gives Expanded a 12-row deck.
+- BrailleCanvas: virtual 2x4 dot framebuffer, ISO 11548-1 dot table,
+  Bresenham lines + emulated circle; render() skips blank dots so
+  panel background stays untouched; fadeRender uses blendCell alpha.
+- Cinema deck (Expanded + h>=12 + w>=96):
+    * 3x5 raster big-clock elapsed time (colors ride the accent mix,
+      colon dots pulse).
+    * Giant play/pause vector art buttons (▄██▄ / ██████ art rows),
+      the whole 9x5 region is the click hox.
+    * seek flanks [ << 10s ] and [ 10s >> ] flanking vertically centered.
+    * standard scrub/status/volume rows below.
+- Braille oscilloscope: on Expanded + wave data, a 3-row poly-line strip
+  from the latest 384 mono samples above the bars (only when w > 130).
+- Bar OVERFLOW (recently added): while playing, spectrum bars get 2
+  extra rows of canvas above the panel interior; cells mapping above
+  the frame line are emitted via blendCell (alpha .85 on the frame row,
+  .55 above) so they LOOK like they're leaking through the chassis;
+  bass peaks push past the boundary. When playback stops the fade decay
+  re-bounds bars under the roof; each frame's chassis repaint repairs
+  the border line (no residue in the diff buffer).
+
+============================================================================
+ 8. TESTING HARNESS (repeat these)
+============================================================================
+- Build:   cmake -S . -B build && cmake --build build -j8
+- ASan:    cmake -S . -B build-asan -DCMAKE_BUILD_TYPE=Debug
+           -DCMAKE_CXX_FLAGS="-fsanitize=address -g" && cmake --build ...
+- Smoke:   key/native run needs a TTY. Our pty driver:
+    python3 tools/ptykeys.py "<cmd>" <quiet_s> <tail_s> <outfile>
+    with KEYS="\x1b[B|\n| " feeding Down, Enter, Space.
+    - Rendering dump emulates an SGR/CUP basic parser:
+        python3 tools/render.py <outfile>
+      PIXEL dump (the only way to judge colour/art/layout):
+        python3 tools/screen_text_png.py <dump> <out.png> [cols rows]   # real text
+        python3 tools/screen_png.py <dump> <out.png> [cols rows] --bg 0A0E1A
+      Both use pyte; screen_text_png needs pillow + DejaVuSansMono. Rasterized
+      cells are 12x24 (text) / 8x16 (blocks) so a 92x28 dump is a readable PNG.
+      ptykeys.py honours COLS/ROWS env vars, e.g. `COLS=150 ROWS=42 …`.
+      Pure text checks: tools/render.py or pyte + screen.display.
+  VERIFIED narrow-glyph and WIDE-glyph rows, control-char filenames, volume
+  click + drag (SGR press 0 then motion 32 at the bar), 92x28 and 150x42.
+- GOTCHA RECORD: our first "missing left border column" report was a false
+  alarm from the emulator (it doesn't model deferred auto-wrap at col EOL).
+  When in doubt, grep the raw stream for the exact CUPs before changIng
+  the renderer (walked into that; three hours to trace — never again.
+
+============================================================================
+ 11. CONFIG (config.ini)
+============================================================================
+Lookup: --config PATH > $QPANEL_CONFIG > $XDG_CONFIG_HOME/qpanel/config.ini
+        > ~/.config/qpanel/config.ini > ./config.ini. Flags always win.
+Manage with: qpanel --print-config (stdout) / --write-config [--force] (writes
+the resolved path, creates ~/.config/qpanel).
+
+  [general] theme, icons, volume (0..1), idle_timeout (seconds to visualizer)
+  [layout]  gap_out (screen margin, default 0 = flush to the edges),
+            gap_in (between panels, default 1), pad_x / pad_y (interior
+            padding), border = rounded|single|double|heavy|ascii|none,
+            shadow = true|false, art_panel = true|false (off = single column,
+            tree/spectrum gets the full width), art_split = 20..80 (left column
+            %, default 46), art_fit = true|false (square crop vs letterbox)
+  [art]     engine, symbols (block|ascii|ramp|sextant|braille|all), colors,
+            dither, ramp (ASCII density ladder), fg_only, gamma,
+            fallback (default | none | /path/to/image)  (chafa section)
+  [colors]  optional per-theme overrides: accent_a/accent_b/frame/frame_hi/
+            surface/text/dim/label/ok/warn/err as #RRGGBB
+
+LIVE RELOAD: Ctrl+R (or Ctrl+Shift+R where the terminal reports modifiers —
+kitty keyboard protocol CSI 114;6u; plain terminals send the same 0x12) re-reads
+the same file into a FRESH Config, so removed keys fall back to defaults. It
+re-applies palette, icons, art engine/settings (cover re-renders), volume and
+idle timeout, and flashes "CFG RELOADED" / "CFG n WARN" / "NO CONFIG" in the
+CONTROLS title for 2.5s. Reload is a UI-thread operation: applyTrack captures
+[art] fallback on the UI thread so the worker never reads cfg() concurrently.
+
+Parser rules: '#' / ';' start a comment either as a full line or inline when
+preceded by whitespace — that keeps "#RRGGBB" (no leading space) intact while
+`shadow = true  # note` works. Section headers in [brackets], unknown keys are
+warned on stderr and ignored, bad values are ignored (never fatal). Colours use
+-1 as "unset" internally so #000000 is a legal override.
+
+FALLBACK COVER (tracks with no embedded art and no dir art):
+  assets/default-cover.{jpg,jpeg,png,bmp}, resolved in this order —
+  $XDG_CONFIG_HOME/qpanel/assets, ~/.config/qpanel/assets,
+  <exe>/assets, <exe>/../assets, ./assets. Override with [art] fallback = PATH,
+  disable with `fallback = none`. Loaded ONCE (std::call_once) and reused for
+  every art-less track. The ♪ gradient card only appears when the fallback is
+  missing or undecodable. Keep the asset square: the panel crops 1:1.
+
+SIZE MATRIX CHECKED (pty captures at each, layout sane, nothing clipped):
+  92x28 standard | 120x33 720p | 160x45 1080p | 220x60 | 320x78 | 480x146
+  (480x146 = the owner's maximum; ~50 KB/s of output, no stall).
+  metaH = clamp(innerH*38/100, 10, 16); deck 9 rows standard / 12 Expanded;
+  the deck splits off the PLAY column only when it keeps >= 56 cols.
+
+GEOMETRY CONTRACT (this is what the padding work bought):
+  layout()  gives OUTER panel rects (frame included) using gap_out/gap_in.
+  contentRect(rect) gives the INTERIOR: +1 for the frame, +2 for the title row,
+  then pad_x/pad_y. EVERY widget must draw inside contentRect — the deck bug
+  where scrub/status vanished came from adding another +2 on top of it.
+  Border glyphs come from borderGlyphs(); BorderStyle::None skips the frame and
+  makes contentRect == the panel rect (frameless mode).
+  The engine owns the gain: audio_.setVolume(cfg.volume) must run in App's ctor
+  because deckState_.vol is re-read from audio_.volume() every frame.
+
+============================================================================
+ 9. ROADMAP (ordered by unixporn-launch impact)
+============================================================================
+1. MPRIS2 D-Bus player (playerctl play-pause / waybar title) — needed for
+   first-class Wayland citizenship. sd-bus or sdbus-c++.
+2. Kitty graphics protocol cover rendering (+ Ghostty/WezTerm detection),
+   half-block fallback retained.
+3. WAV/FLAC fail-safe decode MP4/AAC via optional libavcodec fallback.
+4. BPM beat-analysis fallback (onset envelope + autocorrelation in the
+   DSP thread pool) when TBPM absent — spec'd as "-- BPM → analyzing".
+5. Queue/playlist model beyond implicit tree order + M3U8 import/export.
+6. Config file (~/.config/qpanel/config.toml: theme, icons, idle_timeout,
+   palette overrides via hex).
+7. Shader->dither "hyper scanline" post effect on crossfade (experiment).
+8. Multi-char vector STORE: the GlyphSet currently maps 1-char paths only;
+   wire remapped big-glyph tables so ricing users can ship their own
+   .h "icon packs" (user request: "multi char vector draw in later version").
+
+============================================================================
+ 10. KNOWN CHAOS / TODO NOTES FOR NEXT SESSION
+============================================================================
+- Library::visible() is O(total) per call with std::function recursion;
+  fine at this scale, but a row-cache is trivial if perf ever matters.
+- Deck disc hox rects last only the frame they were drawn — the onMouse
+  uses hits_ from the PREVIOUS frame; harmless (60fps) but keep aware if
+  you add animations that move buttons.
+- CoverState rendered cache ignores orientation (art always square-crop);
+  non-square covers are cropped, never stretched, by design.
+- The Metadata `Status: [PLAYING]` label uses `Playing` when deckState.dur>0;
+  if decoder init fails (codec unsupported) banner stays [IDLE] — consider
+  surfacing audio_.loaderFailed() some day.
+- AudioEngine::init() failure (no PipeWire/ALSA) is tolerated: deck shows
+  STOPPED and the UI still runs; toast/hint row TODO.
+- vendor_impl.cpp instantiates miniaudio + stb in one TU — add new vendored
+  header impls there, never in widgets (O/aggregation safety).
