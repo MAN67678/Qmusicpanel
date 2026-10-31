@@ -5,6 +5,8 @@ borders, a chafa cover-art panel, an FFT spectrum that takes over when you stop
 touching the mouse, and a transport deck. No daemon, no database — point it at
 a folder and it plays.
 
+![QPanel at 160x45, spectrum view](docs/screenshot.png)
+
 ```
 qpanel [DIR] [options]
 ```

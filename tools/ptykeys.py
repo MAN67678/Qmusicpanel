@@ -16,6 +16,15 @@ def pump(t0,t1):
             except OSError: return
             if not d: return
             buf+=d
+# WAIT_FOR: block until the app has actually painted. Audio device probing can
+# take a few seconds before the first frame, and keystrokes sent before raw mode
+# is engaged are echoed by the tty instead of reaching the app.
+mark = os.environ.get('WAIT_FOR')
+if mark:
+    deadline = time.time() + float(os.environ.get('WAIT_TIMEOUT', 25))
+    mb = mark.encode()
+    while time.time() < deadline and mb not in buf:
+        pump(time.time(), time.time() + 0.2)
 pump(time.time(),time.time()+interval)
 if os.environ.get('KEYS'):
     keys=os.environ['KEYS'].split('|')
@@ -24,3 +33,10 @@ if os.environ.get('KEYS'):
         pump(time.time(),time.time()+0.6)
 pump(time.time(),time.time()+end)
 out.write(buf)
+# kill the child: a lingering instance keeps the audio device open, and the
+# next run then blocks in device probing for ~25s before its first frame
+try:
+    os.kill(pid, 9)
+    os.waitpid(pid, 0)
+except OSError:
+    pass

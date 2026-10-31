@@ -394,6 +394,12 @@ Files map:
 - Smoke:   key/native run needs a TTY. Our pty driver:
     python3 tools/ptykeys.py "<cmd>" <quiet_s> <tail_s> <outfile>
     with KEYS="\x1b[B|\n| " feeding Down, Enter, Space.
+    WAIT_FOR=<text> blocks until the app has painted that string before the
+    quiet window starts — REQUIRED when the audio server is slow, because
+    keystrokes sent before raw mode is engaged are echoed by the tty and never
+    reach the app (a SIGKILLed instance keeps the audio device open and the
+    next run then blocks in device probing for ~25s). The driver kills its own
+    child on exit for the same reason.
     - Rendering dump emulates an SGR/CUP basic parser:
         python3 tools/render.py <outfile>
       PIXEL dump (the only way to judge colour/art/layout):
@@ -504,3 +510,12 @@ GEOMETRY CONTRACT (this is what the padding work bought):
   STOPPED and the UI still runs; toast/hint row TODO.
 - vendor_impl.cpp instantiates miniaudio + stb in one TU — add new vendored
   header impls there, never in widgets (O/aggregation safety).
+- STARTUP IS BLOCKED ON AUDIO. AudioEngine::init() runs in the App ctor and
+  ma_device_init() polls the sound server; if the server cannot create a node
+  the call never returns and the app shows NOTHING (no first frame), which
+  reads as "qpanel hung". Observed live: PipeWire pinned at its 1024 soft
+  RLIMIT_NOFILE (leaked streams) => EMFILE on node creation => every new
+  stream failed app-wide, qpanel included. Restarting pipewire cleared it; the
+  fix for a user box is a LimitNOFILE=524288 drop-in for pipewire.
+  TODO: move audio init onto the worker thread (or time-box it) so the UI
+  paints first and the deck stays [IDLE] until the engine is ready.
