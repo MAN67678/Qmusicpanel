@@ -36,15 +36,19 @@ cmake --build build-asan -j8
 
 | key | action |
 | --- | --- |
-| space / p | play-pause |
+| w + arrow | move the highlight between the docks |
+| ↑ / ↓ | tree selection while BROWSER is focused, volume on any other dock |
 | ← / → | seek −10s / +10s |
-| ↑ / ↓ | move the tree selection |
+| + / − (hold) | speed up / slow down while held, back to 1x on release |
+| space / p | play-pause |
 | enter | play selection / expand folder |
 | s | shuffle |
 | r | repeat off → all → one |
-| + / − | volume |
-| ctrl+9 / ctrl+0 | reload `config.ini` live |
+| ctrl+9 (or ctrl+0) | reload `config.ini` live |
 | q | quit |
+
+Arrow keys keep driving the transport while the spectrum is up — the tree is
+hidden then, so there is nothing to navigate.
 
 ## Mouse
 

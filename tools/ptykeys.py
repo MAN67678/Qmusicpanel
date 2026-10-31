@@ -30,7 +30,7 @@ if os.environ.get('KEYS'):
     keys=os.environ['KEYS'].split('|')
     for k in keys:
         os.write(fd, bytes(k,'utf-8').decode('unicode_escape').encode('latin1') if '\\' in k else k.encode())
-        pump(time.time(),time.time()+0.6)
+        pump(time.time(),time.time()+float(os.environ.get('KEY_DELAY', 0.6)))
 pump(time.time(),time.time()+end)
 out.write(buf)
 # kill the child: a lingering instance keeps the audio device open, and the

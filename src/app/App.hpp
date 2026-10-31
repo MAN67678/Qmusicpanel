@@ -44,6 +44,9 @@ private:
     void onKey(int key);
     void onMouse(const Mouse& m);
     void playNode(int idx);
+    void treeMove(int dy);                  // move the tree selection by ±1 row
+    void cycleFocus(int dir);               // W + arrow dock ring
+    void updateSpeed();                     // hold-to-speed (+/-) each frame
 
     // ---- workers ----
     void post(std::function<void()> fn);
@@ -92,6 +95,10 @@ private:
     bool scrubbing_ = false;
     bool volDrag_ = false;
     bool quitting_ = false;
+    float rate_ = 1.f;                     // playback speed shown/applied
+    // Hold detection: terminals send no key-up, but auto-repeat keeps a held
+    // key "fresh", so a press within a few hundred ms counts as still held.
+    Clock::time_point lastW_{}, plusStart_{}, lastPlus_{}, minusStart_{}, lastMinus_{};
     float idleTimeout_ = 8.f;   // [general] idle_timeout
     std::string toast_;                    // transient chassis-suffix notice
     Clock::time_point toastUntil_{};

@@ -41,6 +41,20 @@ BPM beat-analysis fallback, playbackdbuf multi-file safety, config file.
 ============================================================================
  0b. FIXED THIS SESSION (2026-10-31 evening)
 ============================================================================
+- KEY MODEL (owner spec): W is a focus modifier — W+arrow walks the dock ring
+  (METADATA → BROWSER → ART → CONTROLS). Arrows navigate the tree ONLY when
+  BROWSER has the highlight and the tree is on screen; everywhere else they
+  drive the transport (up/down volume, left/right seek). While the spectrum is
+  up the tree is invisible, so arrows always mean transport there — the
+  visualizer no longer eats them. '+'/'-' are hold-to-speed, not volume:
+  the rate ramps 1.0 → 2.5 (or 1.0 → 0.5) with hold time and snaps back to 1x
+  when the key stops repeating, with a "SPEED x1.4" toast in the CONTROLS tab.
+  Terminals send no key-up event, so "held" = a fresh press within 400 ms
+  (auto-repeat keeps it fresh); the same trick makes W a modifier.
+  AudioEngine grew setRate(): the device callback pulls frames*rate from the
+  ring and linearly interpolates (pitch moves with speed — walkman, not
+  time-stretch), and posFrames advances by SOURCE frames so the clock stays
+  honest at 2x.
 - EVEN SPACING PASS (owner: "make spacing evenly" / "satisfied to watch"):
   the UI was flush to the screen edges while every inter-panel gap was one
   cell, so the frame read as lopsided. Now:
@@ -309,7 +323,12 @@ Files map:
       lastInput_, so the visualizer stays up while you adjust something;
     * wheel and clicks anywhere else (metadata/art) are dropped before the idle
       timer is touched, since resetting it would fade the visualizer away;
-    * keyboard: any key dismisses silently, `q` still quits.
+    * keyboard: any key dismisses silently (`q` still quits), EXCEPT the
+      transport keys (arrows = volume/seek, +/- = speed) which act on the deck
+      and leave the visualizer up — the tree they would otherwise navigate is
+      not on screen anyway. Those same keys skip the idle-timer reset
+      (isTransportKey in App.cpp), or the timer would cancel the visualizer on
+      the next frame;
 - Timeline: fade ramps at 1.5/s in, 5/s out; smoothstep easing before
   render (t*t*(3-2t)).
 - Blend algo: paint tree into Canvas A, spectrum into Canvas B, then a

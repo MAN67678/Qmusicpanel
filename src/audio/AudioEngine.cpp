@@ -1,4 +1,5 @@
 #include "AudioEngine.hpp"
+#include <algorithm>
 #include <cstring>
 #include <chrono>
 
@@ -160,16 +161,52 @@ void AudioEngine::deviceCb(ma_device* dev, void* out, const void*, ma_uint32 fra
         return;
     }
 
-    ma_uint32 got = 0;
-    if (ma_pcm_rb_available_read(&self->rb_) > 0) {
-        ma_uint32 want = (ma_uint32)frames;
+    ma_uint32 got = 0;          // output frames produced
+    ma_uint64 srcFrames = 0;    // source frames consumed (position clock)
+    const float rate = self->rate_.load(std::memory_order_relaxed);
+
+    if (rate > 0.999f && rate < 1.001f) {
+        if (ma_pcm_rb_available_read(&self->rb_) > 0) {
+            ma_uint32 want = (ma_uint32)frames;
+            void* p = nullptr;
+            got = want;
+            if (ma_pcm_rb_acquire_read(&self->rb_, &got, &p) == MA_SUCCESS && got > 0) {
+                std::memcpy(dst, p, size_t(got) * 2 * sizeof(float));
+                ma_pcm_rb_commit_read(&self->rb_, got);
+                srcFrames = got;
+            } else {
+                got = 0;
+            }
+        }
+    } else {
+        // Variable rate: pull frames*rate from the ring and resample to the
+        // device block with linear interpolation. readFrac_ carries the
+        // fractional cursor across blocks so slow playback does not drift.
+        ma_uint32 need = (ma_uint32)(double(frames) * double(rate)) + 2;
+        if (need < frames) need = (ma_uint32)frames;
+        ma_uint32 avail = need;
         void* p = nullptr;
-        got = want;
-        if (ma_pcm_rb_acquire_read(&self->rb_, &got, &p) == MA_SUCCESS && got > 0) {
-            std::memcpy(dst, p, size_t(got) * 2 * sizeof(float));
-            ma_pcm_rb_commit_read(&self->rb_, got);
-        } else {
-            got = 0;
+        ma_uint32 have = 0;
+        if (ma_pcm_rb_acquire_read(&self->rb_, &avail, &p) == MA_SUCCESS && avail > 0) have = avail;
+        const float* src = static_cast<const float*>(p);
+        double pos = self->readFrac_;
+        size_t i = 0;
+        for (; i < nframes; ++i) {
+            if (!have || pos >= double(have)) break;
+            size_t i0 = size_t(pos);
+            size_t i1 = (i0 + 1 < have) ? i0 + 1 : i0;
+            float t = float(pos - double(i0));
+            dst[i * 2]     = src[i0 * 2]     + (src[i1 * 2]     - src[i0 * 2])     * t;
+            dst[i * 2 + 1] = src[i0 * 2 + 1] + (src[i1 * 2 + 1] - src[i0 * 2 + 1]) * t;
+            pos += double(rate);
+        }
+        got = (ma_uint32)i;
+        if (have) {
+            ma_uint32 used = (ma_uint32)std::min<double>(pos, double(have));
+            if (used) ma_pcm_rb_commit_read(&self->rb_, used);
+            self->readFrac_ = pos - double(used);
+            if (self->readFrac_ < 0.0 || self->readFrac_ > 8.0) self->readFrac_ = 0.0;
+            srcFrames = used;
         }
     }
 
@@ -177,8 +214,9 @@ void AudioEngine::deviceCb(ma_device* dev, void* out, const void*, ma_uint32 fra
     if (size_t(got) < nframes)
         std::memset(dst + size_t(got) * 2, 0, (nframes - size_t(got)) * 2 * sizeof(float));
 
-    // sample-accurate-ish position
-    self->posFrames_ += got;
+    // position advances in SOURCE frames, so the clock stays honest when the
+    // rate is not 1 (at 2x the track is consumed twice as fast)
+    self->posFrames_ += srcFrames;
 
     // volume gain MUST be applied to the output, not just the visualizer tap:
     // this is the only place audio leaves the engine.

@@ -38,6 +38,15 @@ public:
     void setVolume(float v01) { vol_ = v01 < 0.f ? 0.f : v01 > 1.f ? 1.f : v01; }
     float volume() const { return vol_; }
 
+    // Playback rate (0.25 .. 4). Implemented by resampling in the device
+    // callback, so pitch moves with speed (walkman, not time-stretch).
+    void setRate(float r) {
+        if (r < 0.25f) r = 0.25f;
+        if (r > 4.f) r = 4.f;
+        rate_ = r;
+    }
+    float rate() const { return rate_; }
+
     int channels() const { return 2; }
     int sampleRate() const { return 44100; }
 
@@ -95,6 +104,8 @@ private:
     std::atomic<uint64_t> seekTarget_{UINT64_MAX}; // frame index
     std::atomic<uint64_t> posFrames_{0};
     std::atomic<float> vol_{0.85f};
+    std::atomic<float> rate_{1.f};   // playback speed; read by the device cb
+    double readFrac_ = 0.0;          // fractional source cursor (device cb only)
     uint64_t totalFrames_ = 0;
     double durSec_ = 0.0;
     std::string path_;

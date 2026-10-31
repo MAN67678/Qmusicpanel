@@ -287,6 +287,14 @@ void App::scrollTree(int dy) {
 // arrow/whitelist key codes live in Terminal.hpp (VKey) so the parser and the
 // dispatcher can never drift apart.
 
+// keys that drive the transport: they must stay live while the visualizer is
+// up, and must NOT restart the idle timer (that would cancel the visualizer
+// they are acting on top of).
+static bool isTransportKey(int k) {
+    return k == VK_UP || k == VK_DOWN || k == VK_LEFT || k == VK_RIGHT ||
+           k == '+' || k == '=' || k == '-' || k == '_';
+}
+
 void App::handleInput(const Input& ev) {
     // While the visualizer is on the front:
     //   * a click in the browser/spectrum panel dismisses it (and nothing else),
@@ -297,7 +305,11 @@ void App::handleInput(const Input& ev) {
     //   * wheel/motion on anything else is dropped before touching the timer.
     if (fade_ > 0.001f || fadeTarget_ > 0.001f) {
         const Layout L = layout();
-        if (ev.kind == Input::Key) { lastInput_ = Clock::now(); onKey(ev.key); return; }
+        if (ev.kind == Input::Key) {
+            if (!isTransportKey(ev.key)) lastInput_ = Clock::now();
+            onKey(ev.key);
+            return;
+        }
         if (ev.kind != Input::MouseEv) return;
 
         const bool inTransport = L.deck.contains(ev.m.x, ev.m.y) ||
@@ -330,49 +342,113 @@ void App::handleInput(const Input& ev) {
     else if (ev.kind == Input::MouseEv) onMouse(ev.m);
 }
 
+void App::treeMove(int dy) {
+    auto rows = lib_.visible(top_, layout().browser.h - 3);
+    if (rows.empty()) return;
+    int pos = -1;
+    for (size_t i = 0; i < rows.size(); ++i) if (rows[i] == selected_) { pos = int(i); break; }
+    if (pos < 0) { selected_ = rows.front(); return; }
+    if (dy < 0) {
+        if (pos == 0) { if (top_ > 0) { top_--; selected_ = rows.front(); } }
+        else selected_ = rows[size_t(pos) - 1];
+    } else {
+        if (pos + 2 > int(rows.size())) {
+            top_ = std::min(top_ + 1, std::max(0, lib_.visibleCount() - int(rows.size())));
+            selected_ = rows.back();
+        } else selected_ = rows[size_t(pos) + 1];
+    }
+}
+
+void App::cycleFocus(int dir) {
+    static const Focus order[] = { Focus::Metadata, Focus::Browser, Focus::Art, Focus::Deck };
+    int i = 0;
+    for (int k = 0; k < 4; ++k) if (order[k] == focus_) i = k;
+    i = (i + (dir > 0 ? 1 : 3)) & 3;
+    focus_ = order[i];
+}
+
+// '+/-' are hold-to-speed: the rate ramps while the key keeps repeating (auto
+// repeat stands in for the key-up event terminals never send) and snaps back to
+// 1.0 once it is released.
+void App::updateSpeed() {
+    const auto nowT = Clock::now();
+    auto since = [&](Clock::time_point t) { return std::chrono::duration<double>(nowT - t).count(); };
+    float r = 1.f;
+    if (plusStart_ != Clock::time_point{} && since(lastPlus_) < 0.30)
+        r = 1.f + std::min(1.5f, float(since(plusStart_)));
+    else if (minusStart_ != Clock::time_point{} && since(lastMinus_) < 0.30)
+        r = std::max(0.5f, 1.f - float(since(minusStart_)));
+    if (std::fabs(r - rate_) > 0.005f) {
+        rate_ = r;
+        audio_.setRate(r);
+        if (r > 1.001f || r < 0.999f) {
+            char b[32]; std::snprintf(b, sizeof b, "SPEED x%.2f", r);
+            toast_ = b;
+            toastUntil_ = nowT + std::chrono::milliseconds(400);
+        }
+    }
+}
+
 void App::onKey(int key) {
-    // While the idle visualizer is up, the first keypress only sends it away
-    // (animated) — acting on the hidden tree in the same keystroke is a
-    // surprise, e.g. Enter playing a track you could not see.
+    const auto nowT = Clock::now();
+    auto since = [&](Clock::time_point t) { return std::chrono::duration<double>(nowT - t).count(); };
+
     if (key == VK_RELOAD) { reloadConfig(); return; }  // ctrl+9 / ctrl+0
-    if (key != 'q' && key != 'Q' && (fade_ > 0.001f || fadeTarget_ > 0.001f)) { vizHide(); return; }
+
+    // W is the focus modifier: W + arrow moves the highlight between docks.
+    // There is no key-up event, so "held" = a W press within the last 400 ms
+    // (auto-repeat keeps it alive while the finger is down).
+    if (key == 'w' || key == 'W') { lastW_ = nowT; return; }
+    const bool arrow = (key == VK_UP || key == VK_DOWN || key == VK_LEFT || key == VK_RIGHT);
+    if (arrow && since(lastW_) < 0.4) {
+        cycleFocus((key == VK_RIGHT || key == VK_DOWN) ? +1 : -1);
+        return;
+    }
+
+    const bool viz = fade_ > 0.001f || fadeTarget_ > 0.001f;
+    const bool transportKey = isTransportKey(key);
+    // On the visualizer any key sends it away — except the transport keys,
+    // which keep working while it is up (the tree underneath is invisible, so
+    // arrows must mean volume/seek there, not tree navigation).
+    if (viz && !transportKey && key != 'q' && key != 'Q') { vizHide(); return; }
+
+    // arrows navigate the tree only when the browser has the highlight and the
+    // tree is actually on screen; everywhere else they drive the transport
+    const bool treeNav = (focus_ == Focus::Browser) && !viz;
+
     switch (key) {
         case 'q': case 'Q':
             quitting_ = true;
             break;
         case ' ': case 'p': case 'P':
-            fadeTarget_ = 0.f;
+            vizHide();
             audio_.toggle();
             break;
         case VK_LEFT:  audio_.seekBy(-10.0); break;
         case VK_RIGHT: audio_.seekBy(10.0);  break;
-        case VK_UP: {
-            auto rows = lib_.visible(top_, layout().browser.h - 3);
-            if (rows.empty()) break;
-            int pos = -1;
-            for (size_t i = 0; i < rows.size(); ++i) if (rows[i] == selected_) { pos = int(i); break; }
-            if (pos < 0) selected_ = rows.front();
-            else if (pos == 0) { if (top_ > 0) { top_--; selected_ = rows.front(); } }
-            else selected_ = rows[size_t(pos) - 1];
+        case VK_UP:
+            if (treeNav) treeMove(-1);
+            else audio_.setVolume(audio_.volume() + 0.05f);
             break;
-        }
-        case VK_DOWN: {
-            auto rows = lib_.visible(top_, layout().browser.h - 3);
-            if (rows.empty()) break;
-            int pos = -1;
-            for (size_t i = 0; i < rows.size(); ++i) if (rows[i] == selected_) { pos = int(i); break; }
-            if (pos < 0) selected_ = rows.front();
-            else if (pos + 2 > int(rows.size())) { top_ = std::min(top_ + 1, std::max(0, lib_.visibleCount() - (int(rows.size())))); selected_ = rows.back(); }
-            else selected_ = rows[size_t(pos + 1)];
+        case VK_DOWN:
+            if (treeNav) treeMove(+1);
+            else audio_.setVolume(audio_.volume() - 0.05f);
             break;
-        }
+        case '+': case '=':
+            if (since(lastPlus_) > 0.4) plusStart_ = nowT;   // new hold
+            lastPlus_ = nowT;
+            minusStart_ = {}; lastMinus_ = {};
+            break;
+        case '-': case '_':
+            if (since(lastMinus_) > 0.4) minusStart_ = nowT;
+            lastMinus_ = nowT;
+            plusStart_ = {}; lastPlus_ = {};
+            break;
         case '\n': case '\r':
             if (selected_ >= 0) playNode(selected_);
             break;
         case 's': case 'S': deckState_.shuffle = !deckState_.shuffle; break;
         case 'r': case 'R': deckState_.repeat = (deckState_.repeat + 1) % 3; break;
-        case '+': case '=': audio_.setVolume(audio_.volume() + 0.05f); break;
-        case '-': case '_': audio_.setVolume(audio_.volume() - 0.05f); break;
         default: break;
     }
 }
@@ -542,6 +618,7 @@ void App::run() {
         }
 
     render:;
+        updateSpeed();                      // hold-to-speed decays back to 1.0
         deckState_.playing = audio_.playing();
         deckState_.pos = audio_.position();
         deckState_.dur = audio_.duration();

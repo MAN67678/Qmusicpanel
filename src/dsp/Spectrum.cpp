@@ -52,7 +52,6 @@ void Spectrum::run() {
 
     const int BW = BARS;
     auto next = std::chrono::steady_clock::now();
-    bool slowWarned = false;
 
     while (run_) {
         next += 33ms; // ~30Hz analysis

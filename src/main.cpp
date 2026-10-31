@@ -113,9 +113,12 @@ int buildMain(int argc, char** argv) {
             "  --chafa-colors   truecolor (default) | 256 | 16\n"
             "  --chafa-dither   none (default) | ordered | diffusion\n"
             "\n"
-            "keys: space=play/pause  arrows=seek/tree nav  enter=play/expand\n"
-            "      s=shuffle  r=repeat  +/-=volume  q=quit\n"
-            "      ctrl+9 or ctrl+0 = reload config.ini live\n"
+            "keys: space=play/pause  enter=play/expand  q=quit\n"
+            "      w+arrows = move the highlight between docks\n"
+            "      up/down = tree (browser focused) or volume (any other dock)\n"
+            "      left/right = seek -10s / +10s\n"
+            "      + / - (hold) = speed up / down, back to 1x on release\n"
+            "      s=shuffle  r=repeat  ctrl+9 (or ctrl+0) = reload config.ini\n"
             "mouse: click tree (single=select, double=expand/play)  scrub=drag seek\n");
         return 0;
     }
