@@ -41,6 +41,14 @@ BPM beat-analysis fallback, playbackdbuf multi-file safety, config file.
 ============================================================================
  0b. FIXED THIS SESSION (2026-10-31 evening)
 ============================================================================
+- PLAY / CONTROLS FOCUS SPLIT (owner: "the play and control dock highlight at
+  the same time, make it separate"): both docks were painted with
+  `focus_ == Focus::Deck`, so a single click lit two chassis and the 45deg
+  sweep appeared twice on the bottom row. Focus gained a `Play` member; a press
+  inside L.play sets it, and the chassis/player calls now test their own value.
+  The W+arrow ring is five stops (METADATA -> BROWSER -> ART -> CONTROLS ->
+  PLAY) and drops the PLAY stop when the dock disappears under `playW = 0`, so
+  the highlight can never sit on a panel that is not there.
 - KEY MODEL (owner spec): W is a focus modifier — W+arrow walks the dock ring
   (METADATA → BROWSER → ART → CONTROLS). Arrows navigate the tree ONLY when
   BROWSER has the highlight and the tree is on screen; everywhere else they

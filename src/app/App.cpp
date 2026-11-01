@@ -360,11 +360,17 @@ void App::treeMove(int dy) {
 }
 
 void App::cycleFocus(int dir) {
-    static const Focus order[] = { Focus::Metadata, Focus::Browser, Focus::Art, Focus::Deck };
+    const Layout L = layout();
+    const bool hasPlay = L.play.w > 0;
+    static const Focus ring[] = { Focus::Metadata, Focus::Browser, Focus::Art,
+                                  Focus::Deck, Focus::Play };
+    const int n = hasPlay ? 5 : 4;
+    // a vanished PLAY dock (narrow window) must not leave the ring on a ghost
+    if (!hasPlay && focus_ == Focus::Play) focus_ = Focus::Deck;
     int i = 0;
-    for (int k = 0; k < 4; ++k) if (order[k] == focus_) i = k;
-    i = (i + (dir > 0 ? 1 : 3)) & 3;
-    focus_ = order[i];
+    for (int k = 0; k < n; ++k) if (ring[k] == focus_) i = k;
+    i = (i + (dir > 0 ? 1 : n - 1)) % n;
+    focus_ = ring[i];
 }
 
 // '+/-' are hold-to-speed: the rate ramps while the key keeps repeating (auto
@@ -505,7 +511,9 @@ void App::onMouse(const Mouse& m) {
                 applyTrack(n.path.string()); // click == play (decoded audio)
             }
         } else if (L.play.w > 0 && L.play.contains(m.x, m.y)) {
-            focus_ = Focus::Deck;
+            // PLAY is its own dock: the click lights THIS frame, not the CONTROLS
+            // bar next to it (both used to share Focus::Deck and glowed together)
+            focus_ = Focus::Play;
             if (hits_.play.contains(m.x, m.y)) audio_.toggle();
         } else if (L.deck.contains(m.x, m.y)) {
             focus_ = Focus::Deck;
@@ -652,7 +660,7 @@ void App::run() {
         W::chassis(L.art, P_, focus_ == Focus::Art, "ART", "[1:1]");
         W::chassis(L.deck, P_, focus_ == Focus::Deck, "CONTROLS",
                    toastUntil_ > now ? toast_ : std::string());
-        if (L.play.w > 0) W::chassis(L.play, P_, focus_ == Focus::Deck, "PLAY");
+        if (L.play.w > 0) W::chassis(L.play, P_, focus_ == Focus::Play, "PLAY");
 
         W::metadata(L.meta, P_, focus_ == Focus::Metadata, meta_, deckState_);
         if (fadeEased_ <= 0.001f) {
@@ -667,7 +675,7 @@ void App::run() {
         }
         W::cover(L.art, P_, focus_ == Focus::Art, coverState_, meta_.meta);
         W::deck(L.deck, P_, focus_ == Focus::Deck, deckState_, hits_, L.play.w == 0);
-        if (L.play.w > 0) W::player(L.play, P_, focus_ == Focus::Deck, deckState_, hits_);
+        if (L.play.w > 0) W::player(L.play, P_, focus_ == Focus::Play, deckState_, hits_);
 
         t.flush();
 

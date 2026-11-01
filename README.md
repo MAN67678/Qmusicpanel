@@ -1,11 +1,16 @@
 # QPanel
 
+<img src="docs/logo.png" width="180" alt="QPANEL — a Q whose counter is the play button">
+
 A standalone terminal music player: rounded chassis, Hyprland-style gradient
 borders, a chafa cover-art panel, an FFT spectrum that takes over when you stop
 touching the mouse, and a transport deck. No daemon, no database — point it at
 a folder and it plays.
 
 ![QPanel at 160x45, spectrum view](docs/screenshot.png)
+
+The mark, animated (5.8 s, greyscale so it survives any terminal theme):
+[`docs/logo.mp4`](docs/logo.mp4)
 
 ```
 qpanel [DIR] [options]

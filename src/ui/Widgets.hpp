@@ -49,7 +49,7 @@ struct DeckState {
     bool shuffle = false;
 };
 
-enum class Focus { Metadata, Browser, Art, Deck };
+enum class Focus { Metadata, Browser, Art, Deck, Play };
 
 namespace W {
 
