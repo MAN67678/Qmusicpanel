@@ -1,6 +1,6 @@
 # QPanel
 
-<img src="docs/logo.png" width="180" alt="QPANEL — a Q whose counter is the play button">
+<p align="center"><img src="docs/logo.gif" width="180" alt="QPANEL mark — a Q whose counter is the play button"></p>
 
 A standalone terminal music player: rounded chassis, Hyprland-style gradient
 borders, a chafa cover-art panel, an FFT spectrum that takes over when you stop
@@ -9,8 +9,8 @@ a folder and it plays.
 
 ![QPanel at 160x45, spectrum view](docs/screenshot.png)
 
-The mark, animated (5.8 s, greyscale so it survives any terminal theme):
-[`docs/logo.mp4`](docs/logo.mp4)
+The mark, animated above (5.8 s, greyscale so it survives any terminal theme):
+[GIF](docs/logo.gif) · [static PNG](docs/logo.png) · [full-quality MP4](docs/logo.mp4)
 
 ```
 qpanel [DIR] [options]
